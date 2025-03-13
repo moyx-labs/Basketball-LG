@@ -1,0 +1,823 @@
+-- WindUI Setup
+local WindUI = loadstring(game:HttpGet("https://tree-hub.vercel.app/api/UI/WindUI"))()
+
+local Window = WindUI:CreateWindow({
+    Title = "Basketball Legends",
+    Icon = "door-open",
+    Author = "by Moyx",
+    Folder = "Moyx",
+    Size = UDim2.fromOffset(580, 460),
+    Transparent = true,
+    Theme = "Dark",
+    SideBarWidth = 200,
+    HasOutline = false,
+    KeySystem = nil
+})
+
+-- UI Tabs
+local Tabs = {
+    Bot = Window:Tab({ Title = "Bot", Icon = "bot", Desc = "Bot features" }),
+    Player = Window:Tab({ Title = "Player", Icon = "user", Desc = "Tune Tune" }),
+    Esp = Window:Tab({ Title = "Esp", Icon = "eye", Desc = "Visual" }),
+    b = Window:Divider(),
+    CreateThemeTab = Window:Tab({ Title = "Themes", Icon = "palette", Desc = "Design and apply custom themes." }),
+    be = Window:Divider(),
+    LongTab = Window:Tab({ Title = "Version 1.0.1", Icon = "frown", Desc = "Description" })
+}
+
+Window:SelectTab(1)
+
+Window:EditOpenButton({
+    Title = "Open UI",
+    Icon = "maximize-2",
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),             
+        ColorSequenceKeypoint.new(0.1, Color3.fromRGB(255, 30, 30)),          
+        ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 100, 0)),          
+        ColorSequenceKeypoint.new(0.3, Color3.fromRGB(255, 180, 0)),         
+        ColorSequenceKeypoint.new(0.4, Color3.fromRGB(0, 255, 50)),          
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 255)),          
+        ColorSequenceKeypoint.new(0.6, Color3.fromRGB(0, 160, 255)),         
+        ColorSequenceKeypoint.new(0.7, Color3.fromRGB(0, 95, 255)),           
+        ColorSequenceKeypoint.new(0.8, Color3.fromRGB(255, 0, 255)),          
+        ColorSequenceKeypoint.new(0.9, Color3.fromRGB(255, 50, 255)),          
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 180)),   
+    }),
+    Draggable = true,
+})
+
+-- Roblox Services
+local UIS = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local Player = Players.LocalPlayer
+local VisualGui = Player.PlayerGui:WaitForChild("Visual"):WaitForChild("Shooting")
+local Bar = VisualGui:WaitForChild("Bar")
+local Overlay = Bar:WaitForChild("Overlay")
+
+-- Config
+getgenv().config = {
+    Time = 0.40,
+    OverlaySize = 0.5,
+    GreatSize = 0.98, 
+    PerfectSize = 1 
+}
+
+-- Variables
+local isPerfectShotEnabled = false
+local isGreatShotEnabled = false
+local isRandomShotEnabled = false
+local randomPerfectChance = 50
+local isShooting = false
+local lockMeter = false
+local lockedSize = nil
+local savedCourtPosition = nil
+local savedTouchPart = nil
+local autoFarmEnabled = false
+local followedPlayerFarm = nil
+local autoGuardEnabled = false
+local botFollowDelay = 0.5 -- Follow Delay สำหรับ Auto Bot
+local botForwardOffset = 5 -- Forward Offset สำหรับ Auto Bot
+local guardFollowDelay = 0.5 -- Follow Delay สำหรับ Auto Guard
+local guardForwardOffset = 5 -- Forward Offset สำหรับ Auto Guard
+local lastMoveTime = 0
+local followedPlayerGuard = nil
+local isHighlightTargetEnabled = false
+
+-- ล็อก Meter และ Return กลับทันทีถ้าลด
+local lockConnection
+lockConnection = RunService.RenderStepped:Connect(function()
+    if lockMeter and lockedSize and VisualGui.Visible then
+        if Bar.Size.Y.Scale ~= lockedSize then
+            Bar.Size = UDim2.new(1, 0, lockedSize, 0)
+            VisualGui.Visible = false
+        end
+    elseif not VisualGui.Visible then
+        lockMeter = false 
+    end
+end)
+
+-- ฟังก์ชัน Tween ไป Overlay แล้ว Target
+local function tweenShot(targetSize, shotType)
+    if not Player.Character or not Player.Character:FindFirstChild("Basketball") then
+        return
+    end
+    
+    if isShooting then return end
+    isShooting = true
+    lockMeter = false
+
+    Bar.Size = UDim2.new(1, 0, 0, 0)
+    local tweenInfoOverlay = TweenInfo.new(getgenv().config.Time * 0.4, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+    local tweenToOverlay = TweenService:Create(Bar, tweenInfoOverlay, {Size = UDim2.new(1, 0, getgenv().config.OverlaySize, 0)})
+    tweenToOverlay:Play()
+    task.wait(getgenv().config.Time * 0.4)
+
+    local tweenInfoTarget = TweenInfo.new(getgenv().config.Time * 0.6, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+    local tweenToTarget = TweenService:Create(Bar, tweenInfoTarget, {Size = UDim2.new(1, 0, targetSize, 0)})
+    tweenToTarget:Play()
+    task.wait(getgenv().config.Time * 0.6)
+    Bar.Size = UDim2.new(1, 0, targetSize, 0)
+
+    lockMeter = true
+    lockedSize = targetSize
+
+    local success, err = pcall(function()
+        local ShootRemote = game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("Knit"):WaitForChild("Services"):WaitForChild("ControlService"):WaitForChild("RE"):WaitForChild("Shoot")
+        ShootRemote:FireServer(targetSize == 1 and 1 or 0.98)
+    end)
+    if not success then
+        print("Failed to fire Shoot remote: " .. err)
+    end
+
+    print(shotType .. " Shot Triggered!")
+    isShooting = false
+end
+
+-- Input
+UIS.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    
+    if input.KeyCode == Enum.KeyCode.E then
+        if not (isPerfectShotEnabled or isGreatShotEnabled or isRandomShotEnabled) then return end
+        
+        local targetSize, shotType
+        if isRandomShotEnabled then
+            if math.random(0, 100) < randomPerfectChance then
+                targetSize = getgenv().config.PerfectSize
+                shotType = "Perfect"
+            else
+                targetSize = getgenv().config.GreatSize
+                shotType = "Great"
+            end
+        elseif isPerfectShotEnabled then
+            targetSize = getgenv().config.PerfectSize
+            shotType = "Perfect"
+        elseif isGreatShotEnabled then
+            targetSize = getgenv().config.GreatSize
+            shotType = "Great"
+        end
+        
+        tweenShot(targetSize, shotType)
+    end
+end)
+
+-- Auto Farm Functions
+local function IsQueueGuiVisible()
+    local gui = Player.PlayerGui:FindFirstChild("Main")
+    return gui and gui:FindFirstChild("Leave") and gui.Leave.Visible
+end
+
+local function IsScoreboardVisible()
+    local gui = Player.PlayerGui:FindFirstChild("Main")
+    return gui and gui:FindFirstChild("Scoreboard") and gui.Scoreboard.Visible
+end
+
+local function IsMessageBarVisible()
+    local gui = Player.PlayerGui:FindFirstChild("Visual")
+    local messageBar = gui and gui:FindFirstChild("MessageBar", true) and gui.MessageBar:FindFirstChild("Title")
+    return messageBar and messageBar.TextTransparency < 1
+end
+
+local function AddHighlightToPlayer(targetPlayer)
+    if not isHighlightTargetEnabled then return end
+    if targetPlayer and targetPlayer.Character then
+        local character = targetPlayer.Character
+        if not character:FindFirstChild("Highlight") then
+            local highlight = Instance.new("Highlight")
+            highlight.Name = "Highlight"
+            highlight.Parent = character
+            highlight.OutlineColor = Color3.fromRGB(170, 85, 127)
+            highlight.FillColor = Color3.fromRGB(0, 0, 0)
+            highlight.FillTransparency = 0.5
+            highlight.OutlineTransparency = 0
+        end
+    end
+end
+
+local function RemoveHighlightFromPlayer(targetPlayer)
+    if targetPlayer and targetPlayer.Character then
+        local highlight = targetPlayer.Character:FindFirstChild("Highlight")
+        if highlight then
+            highlight:Destroy()
+        end
+    end
+end
+
+local function FindNearestPlayer()
+    local nearestPlayer = nil
+    local minDistance = math.huge
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= Player and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            local distance = (Player.Character.HumanoidRootPart.Position - p.Character.HumanoidRootPart.Position).Magnitude
+            if distance < minDistance then
+                minDistance = distance
+                nearestPlayer = p
+            end
+        end
+    end
+    return nearestPlayer
+end
+
+local function IsHoldingBasketball()
+    local playerFolder = workspace:FindFirstChild(Player.Name)
+    return playerFolder and playerFolder:FindFirstChild("Basketball") and playerFolder.Basketball.Parent == Player.Character
+end
+
+local function AutoFarm()
+    local connection
+    local randomMoveCount = 0
+    local maxRandomMoves = 2
+    local lastRandomMoveTime = 0
+
+    connection = RunService.Stepped:Connect(function(deltaTime)
+        if not autoFarmEnabled then
+            Player.Character.Humanoid:Move(Vector3.new(0, 0, 0))
+            connection:Disconnect()
+            return
+        end
+
+        if not Player.Character or not Player.Character.Humanoid or Player.Character.Humanoid.Health <= 0 then
+            return
+        end
+
+        if not savedCourtPosition or not followedPlayerFarm then
+            WindUI:Notify({
+                Title = "[ Error ]",
+                Content = "Please set a court and select a player first!",
+                Duration = 3
+            })
+            autoFarmEnabled = false
+            connection:Disconnect()
+            return
+        end
+
+        if IsQueueGuiVisible() then
+            Player.Character.Humanoid:Move(Vector3.new(0, 0, 0))
+            repeat task.wait() until not IsQueueGuiVisible()
+        elseif IsScoreboardVisible() then
+            if followedPlayerFarm and followedPlayerFarm.Character and followedPlayerFarm.Character:FindFirstChild("HumanoidRootPart") then
+                local targetRoot = followedPlayerFarm.Character.HumanoidRootPart
+                local currentTime = tick()
+
+                if IsMessageBarVisible() then
+                    Player.Character.Humanoid:Move(Vector3.new(0, 0, 0))
+                elseif currentTime - lastMoveTime >= botFollowDelay then
+                    local targetPosition = targetRoot.Position + (targetRoot.CFrame.LookVector * botForwardOffset)
+                    Player.Character.Humanoid:MoveTo(targetPosition)
+                    lastMoveTime = currentTime
+                end
+            else
+                Player.Character.Humanoid:Move(Vector3.new(0, 0, 0))
+            end
+        else
+            local distance = (Player.Character.HumanoidRootPart.Position - savedCourtPosition).Magnitude
+            local currentTime = tick()
+
+            if distance > 1 then
+                if randomMoveCount < maxRandomMoves and currentTime - lastRandomMoveTime >= 0.5 then
+                    local randomChoice = math.random(1, 4)
+                    local randomOffset
+                    if randomChoice == 1 then
+                        randomOffset = Player.Character.HumanoidRootPart.CFrame.RightVector * -5
+                    elseif randomChoice == 2 then
+                        randomOffset = Player.Character.HumanoidRootPart.CFrame.RightVector * 5
+                    elseif randomChoice == 3 then
+                        local randomAngle = math.rad(math.random(0, 360))
+                        randomOffset = Vector3.new(math.cos(randomAngle), 0, math.sin(randomAngle)) * 5
+                    else
+                        randomOffset = Player.Character.HumanoidRootPart.CFrame.LookVector * -5
+                    end
+
+                    local randomPosition = Player.Character.HumanoidRootPart.Position + randomOffset
+                    Player.Character.Humanoid:MoveTo(randomPosition)
+                    randomMoveCount = randomMoveCount + 1
+                    lastRandomMoveTime = currentTime
+                else
+                    Player.Character.Humanoid:MoveTo(savedCourtPosition)
+                end
+            else
+                Player.Character.Humanoid:Move(Vector3.new(0, 0, 0))
+                firetouchinterest(Player.Character.HumanoidRootPart, savedTouchPart, 0)
+                task.wait(0.1)
+                firetouchinterest(Player.Character.HumanoidRootPart, savedTouchPart, 1)
+            end
+        end
+    end)
+end
+
+local function AutoGuard()
+    local connection
+    connection = RunService.Stepped:Connect(function(deltaTime)
+        if not autoGuardEnabled then
+            if followedPlayerGuard then
+                RemoveHighlightFromPlayer(followedPlayerGuard)
+                followedPlayerGuard = nil
+            end
+            Player.Character.Humanoid:Move(Vector3.new(0, 0, 0))
+            connection:Disconnect()
+            return
+        end
+
+        if not Player.Character or not Player.Character.Humanoid or Player.Character.Humanoid.Health <= 0 then
+            return
+        end
+
+        if IsHoldingBasketball() then
+            autoGuardEnabled = false
+            if followedPlayerGuard then
+                RemoveHighlightFromPlayer(followedPlayerGuard)
+                followedPlayerGuard = nil
+            end
+            Player.Character.Humanoid:Move(Vector3.new(0, 0, 0))
+            connection:Disconnect()
+            return
+        end
+
+        if not IsScoreboardVisible() then
+            Player.Character.Humanoid:Move(Vector3.new(0, 0, 0))
+            return
+        end
+
+        local nearestPlayer = FindNearestPlayer()
+        if nearestPlayer ~= followedPlayerGuard then
+            if followedPlayerGuard then
+                RemoveHighlightFromPlayer(followedPlayerGuard)
+            end
+            followedPlayerGuard = nearestPlayer
+            if followedPlayerGuard then
+                AddHighlightToPlayer(followedPlayerGuard)
+            end
+        end
+
+        if followedPlayerGuard and followedPlayerGuard.Character and followedPlayerGuard.Character:FindFirstChild("HumanoidRootPart") then
+            local targetRoot = followedPlayerGuard.Character.HumanoidRootPart
+            local currentTime = tick()
+
+            if currentTime - lastMoveTime >= guardFollowDelay then
+                local targetPosition = targetRoot.Position + (targetRoot.CFrame.LookVector * guardForwardOffset)
+                Player.Character.Humanoid:MoveTo(targetPosition)
+                lastMoveTime = currentTime
+            end
+        else
+            Player.Character.Humanoid:Move(Vector3.new(0, 0, 0))
+        end
+    end)
+end
+
+-- Ball Magnet Function
+local magnetEnabled = false
+local magnetReach = 15 -- ระยะเริ่มต้น 15 studs
+
+local function MagnetizeBall()
+    if not magnetEnabled then return end
+    
+    local character = Players.LocalPlayer.Character
+    if not character then return end
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+
+    -- ตรวจสอบว่าถือลูกบาสอยู่แล้วหรือไม่
+    if IsHoldingBasketball() then return end
+
+    local ball = workspace:FindFirstChild("Basketball")
+    if ball and ball:IsA("BasePart") then
+        local touchInterest = ball:FindFirstChild("TouchInterest")
+        if touchInterest then
+            local distance = (ball.Position - rootPart.Position).Magnitude
+            if distance <= magnetReach then
+                -- รัน firetouchinterest ต่อเนื่องในระยะ
+                for _ = 1, 3 do -- เรียก 3 ครั้งต่อเฟรมเพื่อความแน่นอน
+                    firetouchinterest(rootPart, ball, 0) -- Touch
+                    firetouchinterest(rootPart, ball, 1) -- Untouch
+                end
+            end
+        end
+    end
+end
+
+-- UI Elements
+Tabs.Bot:Section({ Title = "Config Bot" })
+Tabs.Bot:Button({
+    Title = "Set Court",
+    Desc = "Set the nearest court position",
+    Callback = function()
+        local courts = workspace.Game.Courts:GetChildren()
+        local closestCourt = nil
+        local closestTouchPart = nil
+        local minDistance = math.huge
+
+        for _, court in pairs(courts) do
+            local touchParts = {
+                court:FindFirstChild("Queue") and court.Queue:FindFirstChild("Home") and court.Queue.Home:FindFirstChild("Home1") and court.Queue.Home.Home1:FindFirstChild("TouchInterest"),
+                court:FindFirstChild("Queue") and court.Queue:FindFirstChild("Away") and court.Queue.Away:FindFirstChild("Away1") and court.Queue.Away.Away1:FindFirstChild("TouchInterest")
+            }
+
+            for _, touchPart in pairs(touchParts) do
+                if touchPart then
+                    local distance = (Player.Character and Player.Character.HumanoidRootPart and (Player.Character.HumanoidRootPart.Position - touchPart.Parent.Position).Magnitude or math.huge)
+                    if distance < minDistance then
+                        minDistance = distance
+                        closestCourt = touchPart.Parent
+                        closestTouchPart = touchPart.Parent
+                    end
+                end
+            end
+        end
+
+        if closestCourt and minDistance <= 10 then
+            savedCourtPosition = closestCourt.Position
+            savedTouchPart = closestTouchPart
+            WindUI:Notify({
+                Title = "[ Success ]",
+                Content = "Court position set!",
+                Duration = 3
+            })
+        else
+            WindUI:Notify({
+                Title = "[ Error ]",
+                Content = "You must be near a court (Home or Away) to set!",
+                Duration = 3
+            })
+        end
+    end
+})
+
+local playerDropdown = Tabs.Bot:Dropdown({
+    Title = "Select Player",
+    Values = {"No players found!"},
+    Value = "...",
+    Callback = function(value)
+        if value and value ~= "No players found!" then
+            if followedPlayerFarm then
+                RemoveHighlightFromPlayer(followedPlayerFarm)
+            end
+            followedPlayerFarm = Players:FindFirstChild(value)
+            if followedPlayerFarm and autoFarmEnabled then
+                AddHighlightToPlayer(followedPlayerFarm)
+            end
+            WindUI:Notify({
+                Title = "[ Info ]",
+                Content = "Selected player: " .. value,
+                Duration = 3
+            })
+        else
+            if followedPlayerFarm then
+                RemoveHighlightFromPlayer(followedPlayerFarm)
+                followedPlayerFarm = nil
+            end
+        end
+    end
+})
+
+local function UpdatePlayerDropdown()
+    local playerList = {}
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= Player then
+            table.insert(playerList, p.Name)
+        end
+    end
+    if #playerList == 0 then
+        playerList = {"No players found!"}
+        if followedPlayerFarm then
+            RemoveHighlightFromPlayer(followedPlayerFarm)
+            followedPlayerFarm = nil
+            playerDropdown:Select("No players found!")
+        end
+    end
+    playerDropdown:Refresh(playerList)
+end
+
+local botFollowDelaySlider = Tabs.Bot:Slider({
+    Title = "Follow Delay",
+    Value = { Min = 0.1, Max = 3, Default = 0.5 },
+    Callback = function(value)
+        botFollowDelay = value
+    end
+})
+
+local botForwardOffsetSlider = Tabs.Bot:Slider({
+    Title = "Forward Offset",
+    Value = { Min = 0.1, Max = 10, Default = 3.5 },
+    Callback = function(value)
+        botForwardOffset = value
+    end
+})
+
+Tabs.Bot:Section({ Title = "Automatic" })
+local autoBotToggle = Tabs.Bot:Toggle({
+    Title = "Auto Bot",
+    Default = false,
+    Callback = function(state)
+        autoFarmEnabled = state
+        if autoFarmEnabled then
+            if not savedCourtPosition then
+                WindUI:Notify({
+                    Title = "[ Error ]",
+                    Content = "Please set a court first!",
+                    Duration = 3
+                })
+                autoFarmEnabled = false
+                return
+            end
+            if not followedPlayerFarm then
+                WindUI:Notify({
+                    Title = "[ Error ]",
+                    Content = "Please select a player first!",
+                    Duration = 3
+                })
+                autoFarmEnabled = false
+                return
+            end
+            if followedPlayerFarm then
+                AddHighlightToPlayer(followedPlayerFarm)
+            end
+            task.spawn(AutoFarm)
+        else
+            RemoveHighlightFromPlayer(followedPlayerFarm)
+        end
+    end
+})
+
+Tabs.Player:Section({ Title = "Config Guard" })
+local guardFollowDelaySlider = Tabs.Player:Slider({
+    Title = "Follow Delay",
+    Value = { Min = 0.1, Max = 3, Default = 0.5 },
+    Callback = function(value)
+        guardFollowDelay = value
+    end
+})
+
+local guardForwardOffsetSlider = Tabs.Player:Slider({
+    Title = "Forward Offset",
+    Value = { Min = 0.1, Max = 10, Default = 3.5 },
+    Callback = function(value)
+        guardForwardOffset = value
+    end
+})
+
+local autoGuardToggle = Tabs.Player:Toggle({
+    Title = "Auto Guard",
+    Default = false,
+    Callback = function(state)
+        autoGuardEnabled = state
+        if autoGuardEnabled then
+            if IsHoldingBasketball() then
+                autoGuardEnabled = false
+                WindUI:Notify({
+                    Title = "[ Error ]",
+                    Content = "Cannot enable Auto Guard while holding basketball!",
+                    Duration = 3
+                })
+                return
+            end
+            task.spawn(AutoGuard)
+        else
+            if followedPlayerGuard then
+                RemoveHighlightFromPlayer(followedPlayerGuard)
+                followedPlayerGuard = nil
+            end
+        end
+    end
+})
+
+Tabs.Player:Keybind({
+    Title = "Keybind Auto Guard",
+    Value = "T",
+    CanChange = true,
+    Callback = function()
+        autoGuardEnabled = not autoGuardEnabled
+        if autoGuardEnabled then
+            if IsHoldingBasketball() then
+                autoGuardEnabled = false
+                WindUI:Notify({
+                    Title = "[ Error ]",
+                    Content = "Cannot enable Auto Guard while holding basketball!",
+                    Duration = 3
+                })
+                return
+            end   
+            task.spawn(AutoGuard)
+        else
+            if followedPlayerGuard then
+                RemoveHighlightFromPlayer(followedPlayerGuard)
+                followedPlayerGuard = nil
+            end
+        end
+    end
+})
+
+Tabs.Player:Section({ Title = "Config Shooting" })
+local perfectShotToggle = Tabs.Player:Toggle({
+    Title = "Perfect 100%",
+    Default = false,
+    Callback = function(state)
+        isPerfectShotEnabled = state
+        if state then
+            isGreatShotEnabled = false
+            isRandomShotEnabled = false
+        end
+    end
+})
+
+local greatShotToggle = Tabs.Player:Toggle({
+    Title = "Great 100%",
+    Default = false,
+    Callback = function(state)
+        isGreatShotEnabled = state
+        if state then
+            isPerfectShotEnabled = false
+            isRandomShotEnabled = false
+        end
+    end
+})
+
+local randomShotToggle = Tabs.Player:Toggle({
+    Title = "Random (Perfect/Great)",
+    Default = false,
+    Callback = function(state)
+        isRandomShotEnabled = state
+        if state then
+            isPerfectShotEnabled = false
+            isGreatShotEnabled = false
+        end
+    end
+})
+
+local perfectChanceSlider = Tabs.Player:Slider({
+    Title = "Perfect Chance (%)",
+    Value = { Min = 0, Max = 100, Default = 50 },
+    Callback = function(value)
+        randomPerfectChance = value
+    end
+})
+
+-- Ball Mag/Reach Section
+Tabs.Player:Section({ Title = "Config Ball" })
+Tabs.Player:Toggle({
+    Title = "Mag/Reach",
+    Value = false,
+    Callback = function(state)
+        magnetEnabled = state
+        WindUI:Notify({
+            Title = "Basketball Legends",
+            Content = "Ball Mag/Reach " .. (magnetEnabled and "Enabled" or "Disabled"),
+            Duration = 3
+        })
+    end
+})
+
+Tabs.Player:Slider({
+    Title = "studs",
+    Value = {
+        Min = 1,
+        Max = 30,
+        Default = 15,
+    },
+    Callback = function(value)
+        magnetReach = value
+    end
+})
+
+Tabs.Esp:Section({ Title = "ESP Settings" })
+local highlightTargetToggle = Tabs.Esp:Toggle({
+    Title = "Highlight Target",
+    Value = true,
+    Callback = function(state)
+        isHighlightTargetEnabled = state
+        if state then
+            if autoFarmEnabled and followedPlayerFarm then
+                AddHighlightToPlayer(followedPlayerFarm)
+            end
+            if autoGuardEnabled and followedPlayerGuard then
+                AddHighlightToPlayer(followedPlayerGuard)
+            end
+            WindUI:Notify({ Title = "[ Success ]", Content = "'accordance will be highlighted.", Duration = 3 })
+        else
+            if followedPlayerFarm then
+                RemoveHighlightFromPlayer(followedPlayerFarm)
+            end
+            if followedPlayerGuard then
+                RemoveHighlightFromPlayer(followedPlayerGuard)
+            end
+            WindUI:Notify({ Title = "[ Error ]", Content = "Disabled! No highlights.", Duration = 3 })
+        end
+    end
+})
+
+Tabs.LongTab:Code({
+    Title = "Update Version 1.0.1",
+    Code = [[
++ Add Auto Green
++ Add Auto Guard
++ Fixed Bug
+    ]],
+})
+
+Tabs.LongTab:Code({
+    Title = "Update Version 1.0.0",
+    Code = [[
++ Add Auto Bot
++ Add Delay&Forward Offset
+    ]],
+})
+
+-- Refresh DropDown
+task.spawn(function()
+    task.wait(1)
+    UpdatePlayerDropdown()
+end)
+
+local lastUpdateTime = 0
+local debounceDelay = 2
+
+local function ScheduleDropdownUpdate()
+    local currentTime = tick()
+    if currentTime - lastUpdateTime >= debounceDelay then
+        task.spawn(UpdatePlayerDropdown)
+        lastUpdateTime = currentTime
+    end
+end
+
+Players.PlayerAdded:Connect(ScheduleDropdownUpdate)
+Players.PlayerRemoving:Connect(ScheduleDropdownUpdate)
+
+-- Magnet Loop
+RunService.Stepped:Connect(function()
+    MagnetizeBall()
+end)
+
+WindUI:Notify({
+    Title = "[ System ]",
+    Content = "Auth...",
+    Duration = 8
+})
+
+-- Themes Tab
+local currentThemeName = WindUI:GetCurrentTheme()
+local themes = WindUI:GetThemes()
+
+local ThemeAccent = themes[currentThemeName].Accent
+local ThemeOutline = themes[currentThemeName].Outline
+local ThemeText = themes[currentThemeName].Text
+local ThemePlaceholderText = themes[currentThemeName].PlaceholderText
+
+function updateTheme()
+    WindUI:AddTheme({
+        Name = currentThemeName,
+        Accent = ThemeAccent,
+        Outline = ThemeOutline,
+        Text = ThemeText,
+        PlaceholderText = ThemePlaceholderText
+    })
+    WindUI:SetTheme(currentThemeName)
+end
+
+local CreateInput = Tabs.CreateThemeTab:Input({
+    Title = "Theme Name",
+    Value = currentThemeName,
+    Callback = function(name)
+        currentThemeName = name
+    end
+})
+
+Tabs.CreateThemeTab:Colorpicker({
+    Title = "Background Color",
+    Default = Color3.fromHex(ThemeAccent),
+    Callback = function(color)
+        ThemeAccent = color:ToHex()
+    end
+})
+
+Tabs.CreateThemeTab:Colorpicker({
+    Title = "Outline Color",
+    Default = Color3.fromHex(ThemeOutline),
+    Callback = function(color)
+        ThemeOutline = color:ToHex()
+    end
+})
+
+Tabs.CreateThemeTab:Colorpicker({
+    Title = "Text Color",
+    Default = Color3.fromHex(ThemeText),
+    Callback = function(color)
+        ThemeText = color:ToHex()
+    end
+})
+
+Tabs.CreateThemeTab:Colorpicker({
+    Title = "Placeholder Text Color",
+    Default = Color3.fromHex(ThemePlaceholderText),
+    Callback = function(color)
+        ThemePlaceholderText = color:ToHex()
+    end
+})
+
+Tabs.CreateThemeTab:Button({
+    Title = "Update Theme",
+    Callback = function()
+        updateTheme()
+    end
+})
